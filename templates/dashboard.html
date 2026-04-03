@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<title>Industrial Fire & Gas Monitoring System</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<style>
+
+body{
+margin:0;
+font-family:Segoe UI;
+background:#0b1320;
+color:white;
+}
+
+header{
+padding:25px;
+font-size:28px;
+font-weight:bold;
+background:#162036;
+text-align:center;
+}
+
+.container{
+width:95%;
+margin:auto;
+padding:30px;
+}
+
+.cards{
+display:grid;
+grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+gap:25px;
+margin-bottom:40px;
+}
+
+.card{
+background:#162036;
+padding:30px;
+border-radius:16px;
+text-align:center;
+}
+
+.card h2{
+font-size:30px;
+margin:10px 0;
+}
+
+.charts{
+display:grid;
+grid-template-columns:1fr 1fr;
+gap:30px;
+}
+
+.chart-box{
+background:#162036;
+padding:25px;
+border-radius:16px;
+}
+
+canvas{
+width:100%!important;
+height:400px!important;
+}
+
+.blur{
+filter:blur(6px);
+}
+
+#alertOverlay{
+
+position:fixed;
+top:0;
+left:0;
+width:100%;
+height:100%;
+
+display:none;
+justify-content:center;
+align-items:center;
+
+background:rgba(0,0,0,0.7);
+
+z-index:9999;
+
+}
+
+.alertBox{
+
+background:#b91c1c;
+padding:70px;
+border-radius:20px;
+
+font-size:38px;
+font-weight:bold;
+
+text-align:center;
+
+}
+
+/* History */
+
+.historyBox{
+margin-top:40px;
+background:#162036;
+padding:25px;
+border-radius:16px;
+}
+
+.historyTitle{
+font-size:22px;
+margin-bottom:15px;
+}
+
+.historyList{
+    max-height: 260px;
+    overflow-y: auto;
+    
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.historyItem{
+
+display:flex;
+justify-content:space-between;
+align-items:center;
+
+background:#0f172a;
+
+padding:12px 16px;
+margin-bottom:8px;
+
+border-radius:8px;
+
+border-left:4px solid #22c55e;
+
+font-size:14px;
+
+}
+
+.historyItem.fire{
+border-left-color:#ef4444;
+}
+
+.historyItem.gas{
+border-left-color:#f97316;
+}
+
+.historyItem.temp{
+border-left-color:#eab308;
+}
+
+.historyTime{
+opacity:0.6;
+font-size:12px;
+}
+
+footer{
+margin-top:40px;
+text-align:center;
+opacity:0.6;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<audio id="alarmSound" loop>
+<source src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg">
+</audio>
+
+<div id="alertOverlay">
+<div class="alertBox" id="alertMessage">
+SYSTEM ALERT
+</div>
+</div>
+
+<div id="mainContent">
+
+<header>
+Industrial Fire & Gas Monitoring Dashboard
+</header>
+
+<div class="container">
+
+<div class="cards">
+
+<div class="card">
+Temperature
+<h2 id="tempValue">--</h2>
+</div>
+
+<div class="card">
+Humidity
+<h2 id="humValue">--</h2>
+</div>
+
+<div class="card">
+Gas Sensor
+<h2 id="gasValue">--</h2>
+</div>
+
+<div class="card">
+Flame Sensor
+<h2 id="flameValue">--</h2>
+</div>
+
+<div class="card">
+Alarm Status
+<h2 id="alarmValue">--</h2>
+</div>
+
+</div>
+
+<div class="charts">
+
+<div class="chart-box">
+<canvas id="tempChart"></canvas>
+</div>
+
+<div class="chart-box">
+<canvas id="gasChart"></canvas>
+</div>
+
+</div>
+
+<div class="historyBox">
+
+<div class="historyTitle">
+Event History
+</div>
+
+<div id="eventHistory" class="historyList"></div>
+
+</div>
+
+</div>
+
+<footer>
+Industrial IoT Monitoring
+</footer>
+
+</div>
+
+<script>
+
+const socket = io();
+const MAX_POINTS = 50;
+
+/* Temperature Chart */
+
+const tempChart = new Chart(document.getElementById("tempChart"),{
+
+type:'line',
+
+data:{
+labels:[],
+datasets:[{
+label:"Temperature °C",
+data:[],
+borderColor:"#ff4d4d",
+borderWidth:3,
+tension:0.4
+}]
+},
+
+options:{
+plugins:{legend:{labels:{color:"#fff"}}},
+scales:{
+x:{
+ticks:{color:"#ccc",maxTicksLimit:8},
+grid:{color:"#1e293b"}
+},
+y:{
+suggestedMin: 10,
+suggestedMax: 50,
+ticks:{color:"#ccc"},
+grid:{color:"#1e293b"}
+}
+}
+}
+
+});
+
+/* Gas Timeline Chart */
+
+const gasChart = new Chart(document.getElementById("gasChart"),{
+
+type:'bar',
+
+data:{
+labels:[],
+datasets:[{
+label:"Gas Alarm Timeline",
+data:[],
+backgroundColor:[],
+borderRadius:3,
+barPercentage:0.3,
+categoryPercentage:0.5
+}]
+},
+
+options:{
+plugins:{legend:{labels:{color:"#fff"}}},
+scales:{
+x:{
+ticks:{color:"#ccc",maxTicksLimit:8},
+grid:{color:"#1e293b"}
+},
+y:{
+beginAtZero:true,
+max:1,
+ticks:{
+color:"#ccc",
+stepSize: 1,
+callback:function(value){
+return value==1 ? "GAS" : "SAFE";
+}
+},
+grid:{color:"#1e293b"}
+}
+}
+}
+
+});
+
+/* history */
+
+let lastEvent="";
+
+function addHistory(eventText) {
+
+    const container = document.getElementById("eventHistory");
+    const item = document.createElement("div");
+
+    let type = "";
+
+    if (eventText.includes("FIRE")) type = "fire";
+    else if (eventText.includes("GAS")) type = "gas";
+    else if (eventText.includes("TEMP")) type = "temp";
+
+    item.className = "historyItem " + type;
+
+    // Use toLocaleString() to get both Date and Time
+    const dateTime = new Date().toLocaleString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+
+    item.innerHTML = `
+        <div>${eventText}</div>
+        <div class="historyTime">${dateTime}</div>
+    `;
+
+    container.prepend(item);
+}
+
+/* update dashboard */
+
+function updateDashboard(data){
+
+let highTemp=data.temperature>40;
+
+/* cards */
+
+document.getElementById("tempValue").innerText=data.temperature+" °C";
+document.getElementById("humValue").innerText=data.humidity+" %";
+
+let gas=document.getElementById("gasValue");
+gas.innerHTML=data.gas==1?
+"<span style='color:#ef4444'>🚨 GAS DETECTED</span>":
+"<span style='color:#22c55e'>SAFE</span>";
+
+let flame=document.getElementById("flameValue");
+flame.innerHTML=data.flame==1?
+"<span style='color:#ef4444'>🔥 FIRE</span>":
+"<span style='color:#22c55e'>SAFE</span>";
+
+let alarm=document.getElementById("alarmValue");
+alarm.innerHTML=data.alarm==1?
+"<span style='color:#ef4444'>🚨 ACTIVE</span>":
+"<span style='color:#22c55e'>NORMAL</span>";
+
+/* charts */
+
+tempChart.data.labels.push(new Date(data.timestamp).toLocaleTimeString());
+tempChart.data.datasets[0].data.push(data.temperature);
+
+gasChart.data.labels.push(new Date(data.timestamp).toLocaleTimeString());
+gasChart.data.datasets[0].data.push(data.gas);
+
+gasChart.data.datasets[0].backgroundColor.push(
+data.gas==1?"#ef4444":"#22c55e"
+);
+
+/* limit chart size */
+
+if(gasChart.data.labels.length>MAX_POINTS){
+
+gasChart.data.labels.shift();
+gasChart.data.datasets[0].data.shift();
+gasChart.data.datasets[0].backgroundColor.shift();
+
+tempChart.data.labels.shift();
+tempChart.data.datasets[0].data.shift();
+
+}
+
+tempChart.update();
+gasChart.update();
+
+/* alerts */
+
+let overlay=document.getElementById("alertOverlay");
+let message=document.getElementById("alertMessage");
+let main=document.getElementById("mainContent");
+let sound=document.getElementById("alarmSound");
+
+let alertText="";
+let eventText="";
+
+if(data.flame==1 && data.gas==1){
+
+alertText="🔥🚨 FIRE + GAS LEAK";
+eventText="CRITICAL FIRE + GAS";
+
+}
+
+else if(data.flame==1){
+
+alertText="🔥 FIRE DETECTED";
+eventText="FIRE DETECTED";
+
+}
+
+else if(data.gas==1){
+
+alertText="🚨 GAS LEAK";
+eventText="GAS LEAK";
+
+}
+
+else if(highTemp){
+
+alertText="⚠ HIGH TEMPERATURE";
+eventText="HIGH TEMPERATURE";
+
+}
+
+if(alertText){
+
+overlay.style.display="flex";
+message.innerHTML=alertText;
+
+main.classList.add("blur");
+
+sound.play();
+
+if(eventText!==lastEvent){
+addHistory(eventText);
+lastEvent=eventText;
+}
+
+}else{
+
+overlay.style.display="none";
+main.classList.remove("blur");
+
+sound.pause();
+sound.currentTime=0;
+
+}
+
+}
+
+/* load initial data */
+
+async function loadInitialData(){
+
+const res=await fetch('/api/data');
+const data=await res.json();
+
+data.forEach(d=>updateDashboard(d));
+
+}
+
+/* realtime */
+
+socket.on("new_data",function(data){
+
+updateDashboard(data);
+
+});
+
+loadInitialData();
+
+</script>
+
+</body>
+</html>
